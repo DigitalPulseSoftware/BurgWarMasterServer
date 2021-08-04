@@ -1,13 +1,13 @@
 use std::net::IpAddr;
-use std::str::{FromStr, Utf8Error};
-use std::sync::{Arc, Mutex};
+use std::str::{FromStr};
+
 use std::{u16, usize};
 
 extern crate env_logger;
 use actix_web::HttpResponse;
-use actix_web::{get, middleware, patch, post, web, App, HttpRequest, HttpServer};
+use actix_web::{get, middleware, post, web, App, HttpRequest, HttpServer};
 use base64;
-use r2d2_redis::redis::{Commands, FromRedisValue, RedisError};
+use r2d2_redis::redis::{Commands, FromRedisValue};
 use r2d2_redis::{r2d2, redis, RedisConnectionManager};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
