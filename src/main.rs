@@ -55,24 +55,25 @@ struct RegisterServerInfo {
 
 impl RegisterServerInfo {
     fn to_redis_hash(&self) -> Vec<(String, String)> {
-        let mut hash = vec![];
-        hash.push(("version".to_owned(), self.version.to_string()));
-        hash.push(("port".to_owned(), self.port.to_string()));
-        hash.push(("name".to_owned(), self.name.clone()));
+        let mut hash = vec![
+            ("version".to_owned(), self.version.to_string()),
+            ("port".to_owned(), self.port.to_string()),
+            ("name".to_owned(), self.name.clone()),
+            ("gamemode".to_owned(), self.gamemode.clone()),
+            ("map".to_owned(), self.map.clone()),
+            (
+                "current_player_count".to_owned(),
+                self.current_player_count.to_string(),
+            ),
+            (
+                "maximum_player_count".to_owned(),
+                self.maximum_player_count.to_string(),
+            ),
+        ];
+
         if let Some(ref desc) = self.description {
             hash.push(("description".to_owned(), desc.clone()));
         }
-
-        hash.push(("gamemode".to_owned(), self.gamemode.clone()));
-        hash.push(("map".to_owned(), self.map.clone()));
-        hash.push((
-            "current_player_count".to_owned(),
-            self.current_player_count.to_string(),
-        ));
-        hash.push((
-            "maximum_player_count".to_owned(),
-            self.maximum_player_count.to_string(),
-        ));
 
         if let Some(ref mods) = self.mods {
             hash.push(("mods".to_owned(), mods.join(" ")));
@@ -123,7 +124,7 @@ impl RegisterServerInfo {
                 if mod_name.len() > MAX_MOD_NAME_LENGTH {
                     return Some(format!("mod name \"{0}\" is too long", mod_name));
                 }
-                if mod_name.contains(" ") {
+                if mod_name.contains(' ') {
                     return Some("Mods cannot contain spaces".to_string());
                 }
             }
@@ -139,7 +140,7 @@ impl RegisterServerInfo {
                 if tag_name.len() > MAX_TAG_NAME_LENGTH {
                     return Some(format!("tag name \"{0}\" is too long", tag_name));
                 }
-                if tag_name.contains(" ") {
+                if tag_name.contains(' ') {
                     return Some("Tags cannot contain spaces".to_string());
                 }
             }
@@ -173,7 +174,7 @@ async fn create_server(
     let mut conn = redis_pool.get().unwrap();
 
     if let Some(update_token) = &server_info.update_token {
-        let server_key = "SERVERS:".to_owned() + &update_token;
+        let server_key = "SERVERS:".to_owned() + update_token;
 
         let mut hash = server_info.to_redis_hash();
         hash.push(("ip".to_owned(), addr));
