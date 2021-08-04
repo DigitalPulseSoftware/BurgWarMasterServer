@@ -1,6 +1,6 @@
-use std::{u16, usize};
 use std::net::IpAddr;
 use std::str::FromStr;
+use std::{u16, usize};
 
 use actix_web::HttpResponse;
 use actix_web::{get, middleware, post, web, App, HttpRequest, HttpServer};
