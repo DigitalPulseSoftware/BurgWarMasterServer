@@ -1,0 +1,30 @@
+version: '3'
+services:
+
+  redis:
+    image: 'redis:6.2-alpine'
+    command: [ 'redis-server', '/usr/local/etc/redis/redis.conf' ]
+    volumes:
+      - 'sailredis:/data'
+      - './docker/redis.conf:/usr/local/etc/redis/redis.conf'
+    networks:
+      - burgwar
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+
+  master_server:
+    depends_on: ['redis']
+    image: 'bw_masterserver:latest'
+    ports:
+      - '127.0.0.1:3000:8080'
+    networks:
+      - burgwar
+    links:
+      - redis # links this container to "redis" container
+  
+networks:
+  burgwar:
+    driver: bridge
+volumes:
+  sailredis:
+    driver: local

@@ -322,8 +322,8 @@ async fn main() -> std::io::Result<()> {
     std::env::set_var("RUST_LOG", "info,actix_web=info");
     env_logger::init();
 
-    let manager = RedisConnectionManager::new("redis://localhost").unwrap();
     let pool = r2d2::Pool::builder().build(manager).unwrap();
+    let manager = RedisConnectionManager::new("redis://redis:6379").unwrap();
 
     HttpServer::new(move || {
         App::new()
