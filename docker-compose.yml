@@ -14,7 +14,9 @@ services:
 
   master_server:
     depends_on: ['redis']
-    image: 'bw_masterserver:latest'
+    build:
+      dockerfile: Dockerfile
+      context: .
     ports:
       - '127.0.0.1:3000:8080'
     networks:
