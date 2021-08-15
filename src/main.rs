@@ -243,7 +243,7 @@ struct ServerConnectionInfo {
     is_local: bool,
 }
 
-#[post("/server/connect/{uuid}")]
+#[get("/server/{uuid}/connection_details")]
 async fn connect_to_server(
     web::Path(uuid): web::Path<String>,
     redis_pool: web::Data<r2d2::Pool<RedisConnectionManager>>,
