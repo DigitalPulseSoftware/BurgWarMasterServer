@@ -181,16 +181,12 @@ async fn create_server(
 
         let result: Result<redis::Value, redis::RedisError> =
             redis::transaction(&mut *conn, &[server_key.as_str()], |conn, pipe| {
-                let seconds: isize = conn.ttl(&server_key).unwrap();
-                if seconds <= 0 {
-                    return Err(redis::RedisError::from((
-                        redis::ErrorKind::ExtensionError,
-                        "ServerKeyDoesNotExist",
-                    )));
-                }
+                let uuid: String = conn.hget(&server_key, "uuid")?;
+                let uuid_key = "SERVER_BY_UUID:".to_owned() + &uuid;
 
                 pipe.atomic()
                     .expire(&server_key, SERVER_EXPIRE_TIME)
+                    .expire(&uuid_key, SERVER_EXPIRE_TIME)
                     .ignore()
                     .hset_multiple(&server_key, &hash)
                     .ignore()
