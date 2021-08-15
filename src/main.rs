@@ -25,14 +25,12 @@ struct ServerInfo {
     version: u32,
     uuid: String,
     name: String,
-    address: Option<IpAddr>,
     has_password: Option<bool>,
     desc: String,
     gamemode: String,
     map: String,
     current_player_count: u16,
     maximum_player_count: u16,
-    port: u16,
     uptime: u64,
     mods: Vec<String>,
     tags: Vec<String>,
@@ -210,19 +208,21 @@ async fn create_server(
             }
         }
     } else {
-        let public_uuid = Uuid::new_v4();
+        let public_uuid = Uuid::new_v4().to_string();
         let private_key = rand::thread_rng().gen::<[u8; 24]>();
         let private_key_b64 = base64::encode(&private_key);
 
         let server_key = "SERVERS:".to_owned() + &private_key_b64;
+        let uuid_key = "SERVER_BY_UUID:".to_owned() + &public_uuid;
 
         let mut hash = server_info.to_redis_hash();
-        hash.push(("uuid".to_owned(), public_uuid.to_string()));
+        hash.push(("uuid".to_owned(), public_uuid));
         hash.push(("ip".to_owned(), addr));
 
         let result: Result<redis::Value, redis::RedisError> = redis::pipe()
             .atomic()
             .hset_multiple(&server_key, &hash)
+            .set_ex(uuid_key, &private_key_b64, SERVER_EXPIRE_TIME)
             .ignore()
             .expire(&server_key, SERVER_EXPIRE_TIME)
             .query(&mut *conn);
@@ -233,6 +233,71 @@ async fn create_server(
                 println!("A redis error occurred: {}", err);
                 HttpResponse::InternalServerError().body("An error occurred")
             }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct ServerConnectionInfo {
+    ip: String,
+    port: u16,
+    is_local: bool
+}
+
+#[post("/server/connect/{uuid}")]
+async fn connect_to_server(
+    web::Path(uuid): web::Path<String>,
+    redis_pool: web::Data<r2d2::Pool<RedisConnectionManager>>,
+    req: HttpRequest,
+) -> HttpResponse {
+    let addr;
+    if let Some(forward_ip) = req.connection_info().realip_remote_addr() {
+        if let Ok(ip) = IpAddr::from_str(forward_ip) {
+            addr = ip.to_string();
+        } else {
+            addr = req.peer_addr().unwrap().ip().to_string();
+        }
+    } else {
+        addr = req.peer_addr().unwrap().ip().to_string();
+    }
+
+    let mut conn = redis_pool.get().unwrap();
+
+    let result = redis::transaction(&mut *conn, &[uuid.as_str()], |conn, pipe| {
+        let server_b64: String = conn.get("SERVER_BY_UUID:".to_owned() + &uuid)?;
+        let server_key = "SERVERS:".to_owned() + &server_b64;
+
+        pipe.atomic()
+            .hget(&server_key, "ip")
+            .hget(&server_key, "port")
+            .query(conn)
+    });
+
+    if let Err(err) = result {
+        match err.kind() {
+            redis::ErrorKind::TypeError => {
+                return HttpResponse::NotFound().body("not found");
+            }
+            _ => {
+                println!("an unexpected error occurred: {}", err);
+                return HttpResponse::InternalServerError().body("failed to retrieve server info");
+            }
+        }
+    }
+
+    let (ip, port) = result.unwrap();
+
+    let result = ServerConnectionInfo {
+        is_local: ip == addr,
+        ip,
+        port,
+    };
+
+    match serde_json::to_value(result) {
+        Ok(json) => HttpResponse::Ok().body(json.to_string()),
+        Err(err) => {
+            println!("server connection info serialization failed: {}", err);
+            HttpResponse::InternalServerError().body("serialization failed")
         }
     }
 }
@@ -276,12 +341,6 @@ async fn index(redis_pool: web::Data<r2d2::Pool<RedisConnectionManager>>) -> Htt
                             server_info.gamemode = String::from_redis_value(value).unwrap()
                         }
                         "map" => server_info.map = String::from_redis_value(value).unwrap(),
-                        "ip" => {
-                            server_info.address = Some(
-                                IpAddr::from_str(String::from_redis_value(value).unwrap().as_str())
-                                    .unwrap(),
-                            )
-                        }
                         "maximum_player_count" => {
                             server_info.maximum_player_count = u16::from_redis_value(value).unwrap()
                         }
@@ -293,7 +352,6 @@ async fn index(redis_pool: web::Data<r2d2::Pool<RedisConnectionManager>>) -> Htt
                         }
                         "uuid" => server_info.uuid = String::from_redis_value(value).unwrap(),
                         "name" => server_info.name = String::from_redis_value(value).unwrap(),
-                        "port" => server_info.port = u16::from_redis_value(value).unwrap(),
                         "tags" => {
                             let tag_list = String::from_redis_value(value).unwrap();
                             for tag_name in tag_list.split_whitespace() {
@@ -301,6 +359,9 @@ async fn index(redis_pool: web::Data<r2d2::Pool<RedisConnectionManager>>) -> Htt
                             }
                         }
                         "version" => server_info.version = u32::from_redis_value(value).unwrap(),
+                        // Don't send ip and port
+                        "ip" => {},
+                        "port" => {},
                         _ => {
                             println!("unknown server field {} from redis", field);
                         }
@@ -336,6 +397,7 @@ async fn main() -> std::io::Result<()> {
             .data(pool.clone())
             .service(create_server)
             .service(index)
+            .service(connect_to_server)
     })
     .bind("0.0.0.0:8080")?
     //.bind("[::]:8080")?
