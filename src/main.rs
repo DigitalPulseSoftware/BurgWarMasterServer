@@ -195,13 +195,16 @@ async fn create_server(
 
         match result {
             Ok(_) => HttpResponse::Ok().body(update_token),
-            Err(err) => {
-                if err.to_string() == "ServerKeyDoesNotExist" {
-                    return HttpResponse::NotFound().body("Invalid update token");
+            Err(err) => match err.kind() {
+                redis::ErrorKind::TypeError => {
+                    return HttpResponse::NotFound().body("not found");
                 }
-                println!("A redis error occurred: {}", err);
-                HttpResponse::InternalServerError().body("An error occurred")
-            }
+                _ => {
+                    println!("an unexpected error occurred: {}", err);
+                    return HttpResponse::InternalServerError()
+                        .body("failed to retrieve server info");
+                }
+            },
         }
     } else {
         let public_uuid = Uuid::new_v4().to_string();
@@ -237,7 +240,7 @@ async fn create_server(
 struct ServerConnectionInfo {
     ip: String,
     port: u16,
-    is_local: bool
+    is_local: bool,
 }
 
 #[post("/server/connect/{uuid}")]
@@ -356,8 +359,8 @@ async fn index(redis_pool: web::Data<r2d2::Pool<RedisConnectionManager>>) -> Htt
                         }
                         "version" => server_info.version = u32::from_redis_value(value).unwrap(),
                         // Don't send ip and port
-                        "ip" => {},
-                        "port" => {},
+                        "ip" => {}
+                        "port" => {}
                         _ => {
                             println!("unknown server field {} from redis", field);
                         }
