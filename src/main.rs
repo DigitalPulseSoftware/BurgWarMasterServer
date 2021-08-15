@@ -8,6 +8,7 @@ use r2d2_redis::redis::{Commands, FromRedisValue};
 use r2d2_redis::{r2d2, redis, RedisConnectionManager};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 const MAX_DESCRIPTION_LENGTH: usize = 1024;
 const MAX_GAMEMODE_LENGTH: usize = 255;
@@ -22,6 +23,7 @@ const SERVER_EXPIRE_TIME: usize = 60;
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 struct ServerInfo {
     version: u32,
+    uuid: String,
     name: String,
     address: Option<IpAddr>,
     has_password: Option<bool>,
@@ -208,12 +210,14 @@ async fn create_server(
             }
         }
     } else {
+        let public_uuid = Uuid::new_v4();
         let private_key = rand::thread_rng().gen::<[u8; 24]>();
         let private_key_b64 = base64::encode(&private_key);
 
         let server_key = "SERVERS:".to_owned() + &private_key_b64;
 
         let mut hash = server_info.to_redis_hash();
+        hash.push(("uuid".to_owned(), public_uuid.to_string()));
         hash.push(("ip".to_owned(), addr));
 
         let result: Result<redis::Value, redis::RedisError> = redis::pipe()
@@ -287,6 +291,7 @@ async fn index(redis_pool: web::Data<r2d2::Pool<RedisConnectionManager>>) -> Htt
                                 server_info.mods.push(mod_name.to_owned());
                             }
                         }
+                        "uuid" => server_info.uuid = String::from_redis_value(value).unwrap(),
                         "name" => server_info.name = String::from_redis_value(value).unwrap(),
                         "port" => server_info.port = u16::from_redis_value(value).unwrap(),
                         "tags" => {
