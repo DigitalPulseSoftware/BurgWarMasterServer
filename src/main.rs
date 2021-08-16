@@ -15,6 +15,7 @@ const MAX_GAMEMODE_LENGTH: usize = 255;
 const MAX_MAP_LENGTH: usize = 255;
 const MAX_MOD_COUNT: usize = 255;
 const MAX_MOD_NAME_LENGTH: usize = 32;
+const MAX_NAME_LENGTH: usize = 32;
 const MAX_TAG_COUNT: usize = 8;
 const MAX_TAG_NAME_LENGTH: usize = 16;
 
@@ -89,6 +90,9 @@ impl RegisterServerInfo {
     fn validate(&self) -> Option<String> {
         if self.name.is_empty() {
             return Some("name cannot be empty".to_string());
+        }
+        if self.name.len() > MAX_NAME_LENGTH {
+            return Some("name is too long".to_string());
         }
         if let Some(ref desc) = self.description {
             if desc.len() >= MAX_DESCRIPTION_LENGTH {
