@@ -27,7 +27,7 @@ struct ServerInfo {
     uuid: String,
     name: String,
     has_password: Option<bool>,
-    desc: String,
+    description: String,
     gamemode: String,
     map: String,
     current_player_count: u16,
@@ -338,7 +338,7 @@ async fn index(redis_pool: web::Data<r2d2::Pool<RedisConnectionManager>>) -> Htt
                             server_info.current_player_count = u16::from_redis_value(value).unwrap()
                         }
                         "description" => {
-                            server_info.desc = String::from_redis_value(value).unwrap()
+                            server_info.description = String::from_redis_value(value).unwrap()
                         }
                         "gamemode" => {
                             server_info.gamemode = String::from_redis_value(value).unwrap()
