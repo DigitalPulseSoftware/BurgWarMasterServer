@@ -10,6 +10,8 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+const MASTER_SERVER_DATA_VERSION: u32 = 1;
+
 const MAX_DESCRIPTION_LENGTH: usize = 1024;
 const MAX_GAMEMODE_LENGTH: usize = 255;
 const MAX_MAP_LENGTH: usize = 255;
@@ -21,26 +23,11 @@ const MAX_TAG_NAME_LENGTH: usize = 16;
 
 const SERVER_EXPIRE_TIME: usize = 60;
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-struct ServerInfo {
-    version: u32,
-    uuid: String,
-    name: String,
-    has_password: Option<bool>,
-    description: String,
-    gamemode: String,
-    map: String,
-    current_player_count: u16,
-    maximum_player_count: u16,
-    uptime: u64,
-    mods: Vec<String>,
-    tags: Vec<String>,
-}
-
 #[derive(Clone, Debug, Deserialize)]
 struct RegisterServerInfo {
+    data_version: u32,
+    game_version: u32,
     update_token: Option<String>,
-    version: u32,
     name: String,
     has_password: Option<bool>,
     description: Option<String>,
@@ -57,7 +44,7 @@ struct RegisterServerInfo {
 impl RegisterServerInfo {
     fn to_redis_hash(&self) -> Vec<(String, String)> {
         let mut hash = vec![
-            ("version".to_owned(), self.version.to_string()),
+            ("version".to_owned(), self.game_version.to_string()),
             ("port".to_owned(), self.port.to_string()),
             ("name".to_owned(), self.name.clone()),
             ("gamemode".to_owned(), self.gamemode.clone()),
@@ -88,6 +75,9 @@ impl RegisterServerInfo {
     }
 
     fn validate(&self) -> Option<String> {
+        if self.data_version != MASTER_SERVER_DATA_VERSION {
+            return Some("incompatible data version".to_string());
+        }
         if self.name.is_empty() {
             return Some("name cannot be empty".to_string());
         }
@@ -154,6 +144,12 @@ impl RegisterServerInfo {
     }
 }
 
+#[derive(Clone, Debug, Serialize)]
+struct ServerCreationData {
+    data_version: u32,
+    token: String,
+}
+
 #[post("/servers")]
 async fn create_server(
     redis_pool: web::Data<r2d2::Pool<RedisConnectionManager>>,
@@ -183,7 +179,7 @@ async fn create_server(
         let mut hash = server_info.to_redis_hash();
         hash.push(("ip".to_owned(), addr));
 
-        let result: Result<redis::Value, redis::RedisError> =
+        let redis_result: Result<redis::Value, redis::RedisError> =
             redis::transaction(&mut *conn, &[server_key.as_str()], |conn, pipe| {
                 let uuid: String = conn.hget(&server_key, "uuid")?;
                 let uuid_key = "SERVER_BY_UUID:".to_owned() + &uuid;
@@ -197,8 +193,19 @@ async fn create_server(
                     .query(conn)
             });
 
-        match result {
-            Ok(_) => HttpResponse::Ok().body(update_token),
+        let result = ServerCreationData {
+            data_version: MASTER_SERVER_DATA_VERSION,
+            token: update_token.to_string(),
+        };
+
+        match redis_result {
+            Ok(_) => match serde_json::to_value(result) {
+                Ok(json) => HttpResponse::Ok().body(json.to_string()),
+                Err(err) => {
+                    println!("server creation data serialization failed: {}", err);
+                    HttpResponse::InternalServerError().body("serialization failed")
+                }
+            },
             Err(err) => match err.kind() {
                 redis::ErrorKind::TypeError => {
                     return HttpResponse::NotFound().body("not found");
@@ -222,7 +229,7 @@ async fn create_server(
         hash.push(("uuid".to_owned(), public_uuid));
         hash.push(("ip".to_owned(), addr));
 
-        let result: Result<redis::Value, redis::RedisError> = redis::pipe()
+        let redis_result: Result<redis::Value, redis::RedisError> = redis::pipe()
             .atomic()
             .hset_multiple(&server_key, &hash)
             .set_ex(uuid_key, &private_key_b64, SERVER_EXPIRE_TIME)
@@ -230,8 +237,19 @@ async fn create_server(
             .expire(&server_key, SERVER_EXPIRE_TIME)
             .query(&mut *conn);
 
-        match result {
-            Ok(_) => HttpResponse::Ok().body(private_key_b64),
+        let result = ServerCreationData {
+            data_version: MASTER_SERVER_DATA_VERSION,
+            token: private_key_b64,
+        };
+
+        match redis_result {
+            Ok(_) => match serde_json::to_value(result) {
+                Ok(json) => HttpResponse::Ok().body(json.to_string()),
+                Err(err) => {
+                    println!("server creation data serialization failed: {}", err);
+                    HttpResponse::InternalServerError().body("serialization failed")
+                }
+            },
             Err(err) => {
                 println!("A redis error occurred: {}", err);
                 HttpResponse::InternalServerError().body("An error occurred")
@@ -242,6 +260,7 @@ async fn create_server(
 
 #[derive(Clone, Debug, Serialize)]
 struct ServerConnectionInfo {
+    data_version: u32,
     ip: String,
     port: u16,
     is_local: bool,
@@ -291,6 +310,7 @@ async fn connect_to_server(
     let (ip, port) = result.unwrap();
 
     let result = ServerConnectionInfo {
+        data_version: MASTER_SERVER_DATA_VERSION,
         is_local: ip == addr,
         ip,
         port,
@@ -303,6 +323,28 @@ async fn connect_to_server(
             HttpResponse::InternalServerError().body("serialization failed")
         }
     }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+struct ServerInfo {
+    game_version: u32,
+    uuid: String,
+    name: String,
+    has_password: Option<bool>,
+    description: String,
+    gamemode: String,
+    map: String,
+    current_player_count: u16,
+    maximum_player_count: u16,
+    uptime: u64,
+    mods: Vec<String>,
+    tags: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct ServerListInfo {
+    data_version: u32,
+    servers: Vec<ServerInfo>,
 }
 
 #[get("/servers")]
@@ -323,7 +365,11 @@ async fn index(redis_pool: web::Data<r2d2::Pool<RedisConnectionManager>>) -> Htt
         server_keys.push(key);
     }
 
-    let mut server_list = Vec::new();
+    let mut result = ServerListInfo {
+        data_version: MASTER_SERVER_DATA_VERSION,
+        servers: Vec::new(),
+    };
+
     for key in server_keys.iter() {
         let keys: Result<redis::Value, redis::RedisError> = conn.hgetall(key);
         match keys {
@@ -361,7 +407,9 @@ async fn index(redis_pool: web::Data<r2d2::Pool<RedisConnectionManager>>) -> Htt
                                 server_info.tags.push(tag_name.to_owned());
                             }
                         }
-                        "version" => server_info.version = u32::from_redis_value(value).unwrap(),
+                        "version" => {
+                            server_info.game_version = u32::from_redis_value(value).unwrap()
+                        }
                         // Don't send ip and port
                         "ip" => {}
                         "port" => {}
@@ -371,13 +419,13 @@ async fn index(redis_pool: web::Data<r2d2::Pool<RedisConnectionManager>>) -> Htt
                     }
                 }
 
-                server_list.push(server_info);
+                result.servers.push(server_info);
             }
             Err(err) => println!("failed to retrieve {}: {}", key, err),
         }
     }
 
-    match serde_json::to_value(server_list) {
+    match serde_json::to_value(result) {
         Ok(json) => HttpResponse::Ok().body(json.to_string()),
         Err(err) => {
             println!("server list serialization failed: {}", err);
