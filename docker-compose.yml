@@ -23,7 +23,9 @@ services:
       - burgwar
     links:
       - redis # links this container to "redis" container
-  
+    volumes:
+      - './bw_master_server.toml:./bw_master_server.toml'
+
 networks:
   burgwar:
     driver: bridge
