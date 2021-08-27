@@ -507,6 +507,7 @@ async fn main() -> std::io::Result<()> {
             .service(create_server)
             .service(index)
             .service(connect_to_server)
+            .service(update_server_ipv4)
     })
     .bind("0.0.0.0:8080")?
     //.bind("[::]:8080")?
