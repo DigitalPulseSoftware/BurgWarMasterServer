@@ -23,6 +23,25 @@ const MAX_TAG_NAME_LENGTH: usize = 16;
 
 const SERVER_EXPIRE_TIME: usize = 60;
 
+#[derive(Clone, Serialize, Deserialize)]
+struct AppConfig {
+    listen_address: String,
+    listen_port: u16,
+    ipv4_fallback_url: Option<String>,
+    redis_uri: String,
+}
+
+impl Default for AppConfig {
+    fn default() -> Self { 
+        Self {
+            listen_address: "0.0.0.0".to_owned(),
+            listen_port: 8080,
+            ipv4_fallback_url: None,
+            redis_uri: "localhost:6379".to_owned()
+        } 
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 struct RegisterServerInfo {
     data_version: u32,
@@ -147,12 +166,13 @@ impl RegisterServerInfo {
 #[derive(Clone, Debug, Serialize)]
 struct ServerCreationData {
     data_version: u32,
-    is_ipv6: bool,
+    register_ipv4_url: Option<String>,
     token: String,
 }
 
 #[post("/servers")]
 async fn create_server(
+    app_config: web::Data<AppConfig>,
     redis_pool: web::Data<r2d2::Pool<RedisConnectionManager>>,
     server_info: web::Json<RegisterServerInfo>,
     req: HttpRequest,
@@ -195,7 +215,7 @@ async fn create_server(
 
         let result = ServerCreationData {
             data_version: MASTER_SERVER_DATA_VERSION,
-            is_ipv6: addr.is_ipv6(),
+            register_ipv4_url: None,
             token: update_token.to_string(),
         };
 
@@ -238,9 +258,21 @@ async fn create_server(
             .expire(&server_key, SERVER_EXPIRE_TIME)
             .query(&mut *conn);
 
+        let ipv4_url = if addr.is_ipv6() {
+            if let Some(url) = app_config.ipv4_fallback_url {
+                Some(url + "/servers/register_ipv4");
+            }
+            else {
+                None
+            }
+        }
+        else {
+            None
+        };
+
         let result = ServerCreationData {
             data_version: MASTER_SERVER_DATA_VERSION,
-            is_ipv6: addr.is_ipv6(),
+            register_ipv4_url: ipv4_url,
             token: private_key_b64,
         };
 
@@ -493,23 +525,28 @@ async fn index(redis_pool: web::Data<r2d2::Pool<RedisConnectionManager>>) -> Htt
 }
 
 #[actix_web::main]
-async fn main() -> std::io::Result<()> {
+async fn main() -> Result<(), std::io::Error> {
+    let config: AppConfig = confy::load_path("bw_master_server").unwrap();
+
     std::env::set_var("RUST_LOG", "info,actix_web=info");
     env_logger::init();
 
-    let manager = RedisConnectionManager::new("redis://redis:6379").unwrap();
+    let manager = RedisConnectionManager::new("redis://".to_owned() + &config.redis_uri).unwrap();
     let pool = r2d2::Pool::builder().build(manager).unwrap();
+
+    let bind_address = format!("{}:{}", &config.listen_address, &config.listen_port);
 
     HttpServer::new(move || {
         App::new()
             .wrap(middleware::Logger::default())
+            .data(config.clone())
             .data(pool.clone())
             .service(create_server)
             .service(index)
             .service(connect_to_server)
             .service(update_server_ipv4)
     })
-    .bind("0.0.0.0:8080")?
+    .bind(bind_address)?
     //.bind("[::]:8080")?
     .run()
     .await
