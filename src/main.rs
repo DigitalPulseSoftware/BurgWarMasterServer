@@ -147,6 +147,7 @@ impl RegisterServerInfo {
 #[derive(Clone, Debug, Serialize)]
 struct ServerCreationData {
     data_version: u32,
+    is_ipv6: bool,
     token: String,
 }
 
@@ -163,12 +164,12 @@ async fn create_server(
     let addr;
     if let Some(forward_ip) = req.connection_info().realip_remote_addr() {
         if let Ok(ip) = IpAddr::from_str(forward_ip) {
-            addr = ip.to_string();
+            addr = ip;
         } else {
-            addr = req.peer_addr().unwrap().ip().to_string();
+            addr = req.peer_addr().unwrap().ip();
         }
     } else {
-        addr = req.peer_addr().unwrap().ip().to_string();
+        addr = req.peer_addr().unwrap().ip();
     }
 
     let mut conn = redis_pool.get().unwrap();
@@ -176,8 +177,7 @@ async fn create_server(
     if let Some(update_token) = &server_info.update_token {
         let server_key = "SERVERS:".to_owned() + update_token;
 
-        let mut hash = server_info.to_redis_hash();
-        hash.push(("ip".to_owned(), addr));
+        let hash = server_info.to_redis_hash();
 
         let redis_result: Result<redis::Value, redis::RedisError> =
             redis::transaction(&mut *conn, &[server_key.as_str()], |conn, pipe| {
@@ -195,6 +195,7 @@ async fn create_server(
 
         let result = ServerCreationData {
             data_version: MASTER_SERVER_DATA_VERSION,
+            is_ipv6: addr.is_ipv6(),
             token: update_token.to_string(),
         };
 
@@ -227,7 +228,7 @@ async fn create_server(
 
         let mut hash = server_info.to_redis_hash();
         hash.push(("uuid".to_owned(), public_uuid));
-        hash.push(("ip".to_owned(), addr));
+        hash.push(("ip".to_owned(), addr.to_string()));
 
         let redis_result: Result<redis::Value, redis::RedisError> = redis::pipe()
             .atomic()
@@ -239,6 +240,7 @@ async fn create_server(
 
         let result = ServerCreationData {
             data_version: MASTER_SERVER_DATA_VERSION,
+            is_ipv6: addr.is_ipv6(),
             token: private_key_b64,
         };
 
@@ -255,6 +257,62 @@ async fn create_server(
                 HttpResponse::InternalServerError().body("An error occurred")
             }
         }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct UpdateIpv4Info {
+    update_token: String,
+}
+
+#[post("/servers/register_ipv4")]
+async fn update_server_ipv4(
+    redis_pool: web::Data<r2d2::Pool<RedisConnectionManager>>,
+    server_info: web::Json<UpdateIpv4Info>,
+    req: HttpRequest,
+) -> HttpResponse {
+    let addr;
+    if let Some(forward_ip) = req.connection_info().realip_remote_addr() {
+        if let Ok(ip) = IpAddr::from_str(forward_ip) {
+            addr = ip;
+        } else {
+            addr = req.peer_addr().unwrap().ip();
+        }
+    } else {
+        addr = req.peer_addr().unwrap().ip();
+    }
+
+    if !addr.is_ipv4() {
+        return HttpResponse::BadRequest().body("this route must be called using an IPv4");
+    }
+
+    let mut conn = redis_pool.get().unwrap();
+
+    let server_key = "SERVERS:".to_owned() + &server_info.update_token;
+
+    let redis_result: Result<redis::Value, redis::RedisError> =
+        redis::transaction(&mut *conn, &[server_key.as_str()], |conn, pipe| {
+            let mut ip: String = conn.hget(&server_key, "ip")?;
+            ip = ip + &";".to_owned() + &addr.to_string();
+
+            pipe.atomic()
+                .hset(&server_key, "ip", ip)
+                .ignore()
+                .query(conn)
+        });
+
+    match redis_result {
+        Ok(_) => HttpResponse::Ok().body("{}"),
+        Err(err) => match err.kind() {
+            redis::ErrorKind::TypeError => {
+                return HttpResponse::NotFound().body("not found");
+            }
+            _ => {
+                println!("an unexpected error occurred: {}", err);
+                return HttpResponse::InternalServerError()
+                    .body("failed to retrieve server info");
+            }
+        },
     }
 }
 
@@ -275,12 +333,12 @@ async fn connect_to_server(
     let addr;
     if let Some(forward_ip) = req.connection_info().realip_remote_addr() {
         if let Ok(ip) = IpAddr::from_str(forward_ip) {
-            addr = ip.to_string();
+            addr = ip;
         } else {
-            addr = req.peer_addr().unwrap().ip().to_string();
+            addr = req.peer_addr().unwrap().ip();
         }
     } else {
-        addr = req.peer_addr().unwrap().ip().to_string();
+        addr = req.peer_addr().unwrap().ip();
     }
 
     let mut conn = redis_pool.get().unwrap();
@@ -311,7 +369,7 @@ async fn connect_to_server(
 
     let result = ServerConnectionInfo {
         data_version: MASTER_SERVER_DATA_VERSION,
-        is_local: ip == addr,
+        is_local: ip == addr.to_string(),
         ip,
         port,
     };
