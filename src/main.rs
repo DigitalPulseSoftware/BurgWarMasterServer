@@ -259,8 +259,8 @@ async fn create_server(
             .query(&mut *conn);
 
         let ipv4_url = if addr.is_ipv6() {
-            if let Some(url) = app_config.ipv4_fallback_url {
-                Some(url + "/servers/register_ipv4");
+            if let Some(url) = &app_config.ipv4_fallback_url {
+                Some(format!("{}/servers/register_ipv4", url))
             }
             else {
                 None
@@ -526,7 +526,7 @@ async fn index(redis_pool: web::Data<r2d2::Pool<RedisConnectionManager>>) -> Htt
 
 #[actix_web::main]
 async fn main() -> Result<(), std::io::Error> {
-    let config: AppConfig = confy::load_path("bw_master_server").unwrap();
+    let config: AppConfig = confy::load_path("bw_master_server.toml").unwrap();
 
     std::env::set_var("RUST_LOG", "info,actix_web=info");
     env_logger::init();
