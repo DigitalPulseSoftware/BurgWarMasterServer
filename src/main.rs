@@ -32,13 +32,13 @@ struct AppConfig {
 }
 
 impl Default for AppConfig {
-    fn default() -> Self { 
+    fn default() -> Self {
         Self {
             listen_address: "0.0.0.0".to_owned(),
             listen_port: 8080,
             ipv4_fallback_url: None,
-            redis_uri: "localhost:6379".to_owned()
-        } 
+            redis_uri: "localhost:6379".to_owned(),
+        }
     }
 }
 
@@ -228,13 +228,10 @@ async fn create_server(
                 }
             },
             Err(err) => match err.kind() {
-                redis::ErrorKind::TypeError => {
-                    return HttpResponse::NotFound().body("not found");
-                }
+                redis::ErrorKind::TypeError => HttpResponse::NotFound().body("not found"),
                 _ => {
                     println!("an unexpected error occurred: {}", err);
-                    return HttpResponse::InternalServerError()
-                        .body("failed to retrieve server info");
+                    HttpResponse::InternalServerError().body("failed to retrieve server info")
                 }
             },
         }
@@ -258,17 +255,10 @@ async fn create_server(
             .expire(&server_key, SERVER_EXPIRE_TIME)
             .query(&mut *conn);
 
-        let ipv4_url = if addr.is_ipv6() {
-            if let Some(url) = &app_config.ipv4_fallback_url {
-                Some(format!("{}/servers/register_ipv4", url))
-            }
-            else {
-                None
-            }
-        }
-        else {
-            None
-        };
+        let ipv4_url = app_config
+            .ipv4_fallback_url
+            .as_ref()
+            .map(|url| format!("{}/servers/register_ipv4", url));
 
         let result = ServerCreationData {
             data_version: MASTER_SERVER_DATA_VERSION,
@@ -336,13 +326,10 @@ async fn update_server_ipv4(
     match redis_result {
         Ok(_) => HttpResponse::Ok().body("{}"),
         Err(err) => match err.kind() {
-            redis::ErrorKind::TypeError => {
-                return HttpResponse::NotFound().body("not found");
-            }
+            redis::ErrorKind::TypeError => HttpResponse::NotFound().body("not found"),
             _ => {
                 println!("an unexpected error occurred: {}", err);
-                return HttpResponse::InternalServerError()
-                    .body("failed to retrieve server info");
+                HttpResponse::InternalServerError().body("failed to retrieve server info")
             }
         },
     }
