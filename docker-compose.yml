@@ -24,7 +24,7 @@ services:
     links:
       - redis # links this container to "redis" container
     volumes:
-      - './bw_master_server.toml:/app/bw_masterserver/bw_master_server.toml'
+      - './bw_master_server.toml:/app/bw_master_server.toml'
 
 networks:
   burgwar:
